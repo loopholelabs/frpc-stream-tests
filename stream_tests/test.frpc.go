@@ -4,18 +4,18 @@
 package stream_tests
 
 import (
-	"github.com/loopholelabs/frisbee/pkg/packet"
 	"errors"
+	"github.com/loopholelabs/frisbee/pkg/packet"
 	"io"
 
+	"context"
+	"crypto/tls"
 	"github.com/loopholelabs/frisbee"
 	"github.com/rs/zerolog"
-	"crypto/tls"
-	"context"
 
-	"sync"
 	"github.com/loopholelabs/common/pkg/queue"
 	"go.uber.org/atomic"
+	"sync"
 )
 
 const connectionContextKey int = 1000
@@ -379,8 +379,7 @@ func NewServer(testService TestService, tlsConfig *tls.Config, logger *zerolog.L
 					res.flags = SetErrorFlag(res.flags, true)
 					srv.CloseAndSend(&res)
 				} else {
-					res := Response{}
-					srv.CloseAndSend(&res)
+					srv.CloseSend()
 				}
 				s.streamsMu.RLock()
 				if smap, ok := s.streams[conn.RemoteAddr().String()]; ok {
@@ -444,8 +443,7 @@ func NewServer(testService TestService, tlsConfig *tls.Config, logger *zerolog.L
 					res.flags = SetErrorFlag(res.flags, true)
 					srv.CloseAndSend(&res)
 				} else {
-					res := Count{}
-					srv.CloseAndSend(&res)
+					srv.CloseSend()
 				}
 			}()
 		}
@@ -556,8 +554,7 @@ func NewServer(testService TestService, tlsConfig *tls.Config, logger *zerolog.L
 					res.flags = SetErrorFlag(res.flags, true)
 					srv.CloseAndSend(&res)
 				} else {
-					res := Count{}
-					srv.CloseAndSend(&res)
+					srv.CloseSend()
 				}
 				s.streamsMu.RLock()
 				if smap, ok := s.streams[conn.RemoteAddr().String()]; ok {
@@ -639,6 +636,11 @@ func (x *SendNumbersServer) close() {
 	x.staleMu.Unlock()
 	x.received.Close()
 }
+func (x *SendNumbersServer) CloseSend() error {
+	r := Response{error: io.EOF, flags: SetCloseFlag(0, true)}
+	return x.send(&r)
+}
+
 func (x *SendNumbersServer) CloseAndSend(m *Response) error {
 	m.flags = SetCloseFlag(m.flags, true)
 	return x.send(m)
@@ -661,11 +663,11 @@ func (x *GetNumbersServer) Context() context.Context {
 func (x *GetNumbersServer) Send(m *Count) error {
 	return x.send(m)
 }
-
 func (x *GetNumbersServer) CloseSend() error {
 	r := Count{error: io.EOF, flags: SetCloseFlag(0, true)}
-	return x.Send(&r)
+	return x.send(&r)
 }
+
 func (x *GetNumbersServer) CloseAndSend(m *Count) error {
 	m.flags = SetCloseFlag(m.flags, true)
 	return x.send(m)
@@ -702,11 +704,11 @@ func (x *ExchangeNumbersServer) close() {
 func (x *ExchangeNumbersServer) Send(m *Count) error {
 	return x.send(m)
 }
-
 func (x *ExchangeNumbersServer) CloseSend() error {
 	r := Count{error: io.EOF, flags: SetCloseFlag(0, true)}
-	return x.Send(&r)
+	return x.send(&r)
 }
+
 func (x *ExchangeNumbersServer) CloseAndSend(m *Count) error {
 	m.flags = SetCloseFlag(m.flags, true)
 	return x.send(m)

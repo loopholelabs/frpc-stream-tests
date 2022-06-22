@@ -35,6 +35,19 @@ func TestStreaming(t *testing.T) {
 		t.Parallel()
 		testClientStreaming(client, t)
 	})
+	t.Run("Bidirectional Streaming Interrupted", func(t *testing.T) {
+		t.Parallel()
+		testInterruptedBidirectionalStream(client, t)
+	})
+	t.Run("Server Streaming Interrupted", func(t *testing.T) {
+		t.Parallel()
+		testInterruptedServerStream(client, t)
+	})
+
+	t.Run("Client Streaming Interrupted", func(t *testing.T) {
+		t.Parallel()
+		testClientStreamInterrupted(client, t)
+	})
 }
 
 func testBidirectional(client *Client, t *testing.T) {
@@ -118,4 +131,49 @@ func testClientStreaming(client *Client, t *testing.T) {
 	res, err := stream.CloseAndRecv()
 	assert.NoErrorf(t, err, "Closing send stream resulted in error")
 	assert.Equal(t, int32(100), res.Count)
+}
+
+func testInterruptedBidirectionalStream(client *Client, t *testing.T) {
+	initialCount := Count{Result: 1000}
+	ctx := context.Background()
+	stream, err := client.ExchangeNumbers(ctx, &initialCount)
+	assert.NoErrorf(t, err, "Starting bidirectional stream resulted in error")
+
+	for {
+		_, err := stream.Recv()
+		assert.NotNilf(t, err, "Expected error object")
+		assert.ErrorIs(t, err, io.EOF, "Expected EOF response")
+		return
+	}
+}
+
+func testInterruptedServerStream(client *Client, t *testing.T) {
+	ctx := context.Background()
+	var initialCount int32 = 1000
+	req := Request{InitialCount: initialCount}
+	stream, err := client.GetNumbers(ctx, &req)
+	assert.NoErrorf(t, err, "Opening server stream resulted in error")
+
+	for {
+		_, err := stream.Recv()
+		assert.NotNilf(t, err, "Expected error object")
+		assert.ErrorIs(t, err, io.EOF, "Expected EOF response")
+		return
+	}
+}
+
+func testClientStreamInterrupted(client *Client, t *testing.T) {
+	ctx := context.Background()
+	req := Count{Result: 1000}
+	stream, err := client.SendNumbers(ctx, &req)
+	assert.NoErrorf(t, err, "Starting client stream resulted in error")
+
+	for i := 1; i < 100; i++ {
+		req := Count{Result: int32(i)}
+		err := stream.Send(&req)
+		assert.NoErrorf(t, err, "Sending client stream message resulted in error")
+	}
+	_, err = stream.CloseAndRecv()
+	assert.NotNilf(t, err, "Expected error object")
+	assert.ErrorIs(t, err, io.EOF, "Expected EOF response")
 }

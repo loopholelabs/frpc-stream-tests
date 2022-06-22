@@ -37,6 +37,14 @@ func (s *svc) ExchangeNumbers(srv *ExchangeNumbersServer) error {
 
 		count := req.Result
 
+		// Trigger interrupt test
+		if count > 999 {
+			err := srv.CloseSend()
+			if err != nil {
+				log.Println(err)
+			}
+		}
+
 		resp := Count{Result: count + 1}
 		if err := srv.Send(&resp); err != nil {
 			log.Printf("send error %v", err)
@@ -52,6 +60,12 @@ func (s *svc) GetNumber(ctx context.Context, req *Request) (*Response, error) {
 func (s *svc) GetNumbers(req *Request, srv *GetNumbersServer) error {
 	initial := req.InitialCount
 
+	if initial > 999 {
+		err := srv.CloseSend()
+		if err != nil {
+			log.Println(err)
+		}
+	}
 	for i := initial; i < initial+99; i++ {
 		res := Count{Result: i}
 		err := srv.Send(&res)
@@ -80,5 +94,8 @@ func (s *svc) SendNumbers(srv *SendNumbersServer) error {
 			continue
 		}
 		count = res.Result
+		if count > 999 {
+			return err
+		}
 	}
 }
