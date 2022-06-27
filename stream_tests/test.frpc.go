@@ -218,10 +218,6 @@ func (x *Response) decode(d *polyglot.Decoder) error {
 	return nil
 }
 
-type AnyStreamServer interface {
-	close()
-}
-
 type TestService interface {
 	GetNumber(context.Context, *Request) (*Response, error)
 
@@ -232,14 +228,14 @@ type TestService interface {
 	ExchangeNumbers(srv *ExchangeNumbersServer) error
 }
 
-type ServerMap struct {
-	servers map[uint16]AnyStreamServer
+type ServerMap[T any] struct {
+	servers map[uint16]*T
 	closed  bool
 	mu      sync.Mutex
 }
 
-func NewServerMap() *ServerMap {
-	return &ServerMap{servers: make(map[uint16]AnyStreamServer)}
+func NewServerMap[T any]() *ServerMap[T] {
+	return &ServerMap[T]{servers: make(map[uint16]*T)}
 }
 
 type Server struct {
@@ -248,10 +244,14 @@ type Server struct {
 	nextSendNumbers   uint16
 	nextSendNumbersMu sync.RWMutex
 
+	streamsSendNumbers   map[string]*ServerMap[SendNumbersServer]
+	streamsSendNumbersMu sync.RWMutex
+
 	nextExchangeNumbers   uint16
 	nextExchangeNumbersMu sync.RWMutex
-	streams               map[string]*ServerMap
-	streamsMu             sync.RWMutex
+
+	streamsExchangeNumbers   map[string]*ServerMap[ExchangeNumbersServer]
+	streamsExchangeNumbersMu sync.RWMutex
 }
 
 func NewServer(testService TestService, tlsConfig *tls.Config, logger *zerolog.Logger) (*Server, error) {
@@ -282,11 +282,11 @@ func NewServer(testService TestService, tlsConfig *tls.Config, logger *zerolog.L
 			id := incoming.Metadata.Id
 			conn := ctx.Value(connectionContextKey).(*frisbee.Async)
 
-			s.streamsMu.RLock()
-			if smap, ok := s.streams[conn.RemoteAddr().String()]; ok {
-				s.streamsMu.RUnlock()
+			s.streamsSendNumbersMu.RLock()
+			if smap, ok := s.streamsSendNumbers[conn.RemoteAddr().String()]; ok {
+				s.streamsSendNumbersMu.RUnlock()
 				smap.mu.Lock()
-				if srv, ok := smap.servers[id].(*SendNumbersServer); ok {
+				if srv, ok := smap.servers[id]; ok {
 					smap.mu.Unlock()
 					srv.received.Push(req)
 					if HasCloseFlag(req.flags) {
@@ -297,7 +297,7 @@ func NewServer(testService TestService, tlsConfig *tls.Config, logger *zerolog.L
 					smap.mu.Unlock()
 				}
 			} else {
-				s.streamsMu.RUnlock()
+				s.streamsSendNumbersMu.RUnlock()
 			}
 			q := queue.NewCircular[Count, *Count](100)
 			q.Push(req)
@@ -307,20 +307,22 @@ func NewServer(testService TestService, tlsConfig *tls.Config, logger *zerolog.L
 				stale:    make([]*Count, 0),
 				closed:   atomic.NewBool(false),
 			}
-			s.streamsMu.Lock()
-			if serverMap, ok := s.streams[conn.RemoteAddr().String()]; ok {
-				s.streamsMu.Unlock()
+
+			s.streamsSendNumbersMu.Lock()
+			if serverMap, ok := s.streamsSendNumbers[conn.RemoteAddr().String()]; ok {
+				s.streamsSendNumbersMu.Unlock()
 				serverMap.mu.Lock()
 				serverMap.servers[id] = srv
 				serverMap.mu.Unlock()
 			} else {
-				s.streamsMu.Unlock()
-				serverMap := NewServerMap()
+				s.streamsSendNumbersMu.Unlock()
+				serverMap := NewServerMap[SendNumbersServer]()
 				serverMap.servers[id] = srv
-				s.streamsMu.Lock()
-				s.streams[conn.RemoteAddr().String()] = serverMap
-				s.streamsMu.Unlock()
+				s.streamsSendNumbersMu.Lock()
+				s.streamsSendNumbers[conn.RemoteAddr().String()] = serverMap
+				s.streamsSendNumbersMu.Unlock()
 			}
+
 			srv.recv = func() (*Count, error) {
 				if srv.closed.Load() {
 					srv.staleMu.Lock()
@@ -382,14 +384,14 @@ func NewServer(testService TestService, tlsConfig *tls.Config, logger *zerolog.L
 				} else {
 					srv.CloseSend()
 				}
-				s.streamsMu.RLock()
-				if smap, ok := s.streams[conn.RemoteAddr().String()]; ok {
-					s.streamsMu.RUnlock()
+				s.streamsSendNumbersMu.RLock()
+				if smap, ok := s.streamsSendNumbers[conn.RemoteAddr().String()]; ok {
+					s.streamsSendNumbersMu.RUnlock()
 					smap.mu.Lock()
 					delete(smap.servers, incoming.Metadata.Id)
 					smap.mu.Unlock()
 				} else {
-					s.streamsMu.RUnlock()
+					s.streamsSendNumbersMu.RUnlock()
 				}
 			}()
 		}
@@ -406,20 +408,7 @@ func NewServer(testService TestService, tlsConfig *tls.Config, logger *zerolog.L
 				context: ctx,
 				closed:  atomic.NewBool(false),
 			}
-			s.streamsMu.Lock()
-			if serverMap, ok := s.streams[conn.RemoteAddr().String()]; ok {
-				s.streamsMu.Unlock()
-				serverMap.mu.Lock()
-				serverMap.servers[id] = srv
-				serverMap.mu.Unlock()
-			} else {
-				s.streamsMu.Unlock()
-				serverMap := NewServerMap()
-				serverMap.servers[id] = srv
-				s.streamsMu.Lock()
-				s.streams[conn.RemoteAddr().String()] = serverMap
-				s.streamsMu.Unlock()
-			}
+
 			srv.send = func(m *Count) error {
 				p := packet.Get()
 				p.Metadata.Operation = 12
@@ -457,11 +446,11 @@ func NewServer(testService TestService, tlsConfig *tls.Config, logger *zerolog.L
 			id := incoming.Metadata.Id
 			conn := ctx.Value(connectionContextKey).(*frisbee.Async)
 
-			s.streamsMu.RLock()
-			if smap, ok := s.streams[conn.RemoteAddr().String()]; ok {
-				s.streamsMu.RUnlock()
+			s.streamsExchangeNumbersMu.RLock()
+			if smap, ok := s.streamsExchangeNumbers[conn.RemoteAddr().String()]; ok {
+				s.streamsExchangeNumbersMu.RUnlock()
 				smap.mu.Lock()
-				if srv, ok := smap.servers[id].(*ExchangeNumbersServer); ok {
+				if srv, ok := smap.servers[id]; ok {
 					smap.mu.Unlock()
 					srv.received.Push(req)
 					if HasCloseFlag(req.flags) {
@@ -472,7 +461,7 @@ func NewServer(testService TestService, tlsConfig *tls.Config, logger *zerolog.L
 					smap.mu.Unlock()
 				}
 			} else {
-				s.streamsMu.RUnlock()
+				s.streamsExchangeNumbersMu.RUnlock()
 			}
 			q := queue.NewCircular[Count, *Count](100)
 			q.Push(req)
@@ -482,20 +471,22 @@ func NewServer(testService TestService, tlsConfig *tls.Config, logger *zerolog.L
 				stale:    make([]*Count, 0),
 				closed:   atomic.NewBool(false),
 			}
-			s.streamsMu.Lock()
-			if serverMap, ok := s.streams[conn.RemoteAddr().String()]; ok {
-				s.streamsMu.Unlock()
+
+			s.streamsExchangeNumbersMu.Lock()
+			if serverMap, ok := s.streamsExchangeNumbers[conn.RemoteAddr().String()]; ok {
+				s.streamsExchangeNumbersMu.Unlock()
 				serverMap.mu.Lock()
 				serverMap.servers[id] = srv
 				serverMap.mu.Unlock()
 			} else {
-				s.streamsMu.Unlock()
-				serverMap := NewServerMap()
+				s.streamsExchangeNumbersMu.Unlock()
+				serverMap := NewServerMap[ExchangeNumbersServer]()
 				serverMap.servers[id] = srv
-				s.streamsMu.Lock()
-				s.streams[conn.RemoteAddr().String()] = serverMap
-				s.streamsMu.Unlock()
+				s.streamsExchangeNumbersMu.Lock()
+				s.streamsExchangeNumbers[conn.RemoteAddr().String()] = serverMap
+				s.streamsExchangeNumbersMu.Unlock()
 			}
+
 			srv.recv = func() (*Count, error) {
 				if srv.closed.Load() {
 					srv.staleMu.Lock()
@@ -557,14 +548,14 @@ func NewServer(testService TestService, tlsConfig *tls.Config, logger *zerolog.L
 				} else {
 					srv.CloseSend()
 				}
-				s.streamsMu.RLock()
-				if smap, ok := s.streams[conn.RemoteAddr().String()]; ok {
-					s.streamsMu.RUnlock()
+				s.streamsExchangeNumbersMu.RLock()
+				if smap, ok := s.streamsExchangeNumbers[conn.RemoteAddr().String()]; ok {
+					s.streamsExchangeNumbersMu.RUnlock()
 					smap.mu.Lock()
 					delete(smap.servers, incoming.Metadata.Id)
 					smap.mu.Unlock()
 				} else {
-					s.streamsMu.RUnlock()
+					s.streamsExchangeNumbersMu.RUnlock()
 				}
 			}()
 		}
@@ -592,26 +583,34 @@ func NewServer(testService TestService, tlsConfig *tls.Config, logger *zerolog.L
 	}, nil
 
 	fsrv.SetOnClosed(func(async *frisbee.Async, err error) {
-		s.streamsMu.RLock()
-		if streamMap, ok := s.streams[async.RemoteAddr().String()]; ok {
-			s.streamsMu.RUnlock()
+		s.streamsSendNumbersMu.RLock()
+		if streamMap, ok := s.streamsSendNumbers[async.RemoteAddr().String()]; ok {
+			s.streamsSendNumbersMu.RUnlock()
 			for _, stream := range streamMap.servers {
 				stream.close()
 			}
 			return
 		}
-		s.streamsMu.RUnlock()
+		s.streamsSendNumbersMu.RUnlock()
+		s.streamsExchangeNumbersMu.RLock()
+		if streamMap, ok := s.streamsExchangeNumbers[async.RemoteAddr().String()]; ok {
+			s.streamsExchangeNumbersMu.RUnlock()
+			for _, stream := range streamMap.servers {
+				stream.close()
+			}
+			return
+		}
+		s.streamsExchangeNumbersMu.RUnlock()
 	})
 
 	s.nextSendNumbers = 0
+	s.streamsSendNumbers = make(map[string]*ServerMap[SendNumbersServer])
 	s.nextExchangeNumbers = 0
-	s.streams = make(map[string]*ServerMap)
+	s.streamsExchangeNumbers = make(map[string]*ServerMap[ExchangeNumbersServer])
 	return s, err
 }
 
 type SendNumbersServer struct {
-	AnyStreamServer
-
 	context context.Context
 	recv    func() (*Count, error)
 	send    func(*Response) error
@@ -648,8 +647,6 @@ func (x *SendNumbersServer) CloseAndSend(m *Response) error {
 }
 
 type GetNumbersServer struct {
-	AnyStreamServer
-
 	context context.Context
 	recv    func() (*Request, error)
 	send    func(*Count) error
@@ -675,8 +672,6 @@ func (x *GetNumbersServer) CloseAndSend(m *Count) error {
 }
 
 type ExchangeNumbersServer struct {
-	AnyStreamServer
-
 	context context.Context
 	recv    func() (*Count, error)
 	send    func(*Count) error
