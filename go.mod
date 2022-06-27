@@ -5,9 +5,10 @@ go 1.18
 require (
 	github.com/loopholelabs/common v0.1.1
 	github.com/loopholelabs/frisbee v0.5.0
+	github.com/loopholelabs/polyglot-go v0.2.0
 	github.com/loopholelabs/testing v0.2.3
 	github.com/rs/zerolog v1.27.0
-	github.com/stretchr/testify v1.7.2
+	github.com/stretchr/testify v1.7.5
 	go.uber.org/atomic v1.7.0
 )
 

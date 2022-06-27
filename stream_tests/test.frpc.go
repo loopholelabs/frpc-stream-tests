@@ -6,6 +6,7 @@ package stream_tests
 import (
 	"errors"
 	"github.com/loopholelabs/frisbee/pkg/packet"
+	"github.com/loopholelabs/polyglot-go"
 	"io"
 
 	"context"
@@ -48,17 +49,17 @@ func NewRequest() *Request {
 	return &Request{}
 }
 
-func (x *Request) Error(p *packet.Packet, err error) {
-	packet.Encoder(p).Error(err)
+func (x *Request) Error(p *polyglot.Buffer, err error) {
+	polyglot.Encoder(p).Error(err)
 }
 
-func (x *Request) Encode(p *packet.Packet) {
+func (x *Request) Encode(b *polyglot.Buffer) {
 	if x == nil {
-		packet.Encoder(p).Nil()
+		polyglot.Encoder(b).Nil()
 	} else if x.error != nil {
-		packet.Encoder(p).Error(x.error).Uint8(x.flags)
+		polyglot.Encoder(b).Error(x.error).Uint8(x.flags)
 	} else {
-		packet.Encoder(p).Uint8(x.flags).Int32(x.InitialCount)
+		polyglot.Encoder(b).Uint8(x.flags).Int32(x.InitialCount)
 	}
 }
 
@@ -66,12 +67,12 @@ func (x *Request) Decode(b []byte) error {
 	if x == nil {
 		return NilDecode
 	}
-	d := packet.GetDecoder(b)
+	d := polyglot.GetDecoder(b)
 	defer d.Return()
 	return x.decode(d)
 }
 
-func (x *Request) decode(d *packet.Decoder) error {
+func (x *Request) decode(d *polyglot.Decoder) error {
 	if d.Nil() {
 		return nil
 	}
@@ -108,17 +109,17 @@ func NewCount() *Count {
 	return &Count{}
 }
 
-func (x *Count) Error(p *packet.Packet, err error) {
-	packet.Encoder(p).Error(err)
+func (x *Count) Error(p *polyglot.Buffer, err error) {
+	polyglot.Encoder(p).Error(err)
 }
 
-func (x *Count) Encode(p *packet.Packet) {
+func (x *Count) Encode(b *polyglot.Buffer) {
 	if x == nil {
-		packet.Encoder(p).Nil()
+		polyglot.Encoder(b).Nil()
 	} else if x.error != nil {
-		packet.Encoder(p).Error(x.error).Uint8(x.flags)
+		polyglot.Encoder(b).Error(x.error).Uint8(x.flags)
 	} else {
-		packet.Encoder(p).Uint8(x.flags).Int32(x.Result)
+		polyglot.Encoder(b).Uint8(x.flags).Int32(x.Result)
 	}
 }
 
@@ -126,12 +127,12 @@ func (x *Count) Decode(b []byte) error {
 	if x == nil {
 		return NilDecode
 	}
-	d := packet.GetDecoder(b)
+	d := polyglot.GetDecoder(b)
 	defer d.Return()
 	return x.decode(d)
 }
 
-func (x *Count) decode(d *packet.Decoder) error {
+func (x *Count) decode(d *polyglot.Decoder) error {
 	if d.Nil() {
 		return nil
 	}
@@ -168,17 +169,17 @@ func NewResponse() *Response {
 	return &Response{}
 }
 
-func (x *Response) Error(p *packet.Packet, err error) {
-	packet.Encoder(p).Error(err)
+func (x *Response) Error(p *polyglot.Buffer, err error) {
+	polyglot.Encoder(p).Error(err)
 }
 
-func (x *Response) Encode(p *packet.Packet) {
+func (x *Response) Encode(b *polyglot.Buffer) {
 	if x == nil {
-		packet.Encoder(p).Nil()
+		polyglot.Encoder(b).Nil()
 	} else if x.error != nil {
-		packet.Encoder(p).Error(x.error).Uint8(x.flags)
+		polyglot.Encoder(b).Error(x.error).Uint8(x.flags)
 	} else {
-		packet.Encoder(p).Uint8(x.flags).Int32(x.Count)
+		polyglot.Encoder(b).Uint8(x.flags).Int32(x.Count)
 	}
 }
 
@@ -186,12 +187,12 @@ func (x *Response) Decode(b []byte) error {
 	if x == nil {
 		return NilDecode
 	}
-	d := packet.GetDecoder(b)
+	d := polyglot.GetDecoder(b)
 	defer d.Return()
 	return x.decode(d)
 }
 
-func (x *Response) decode(d *packet.Decoder) error {
+func (x *Response) decode(d *polyglot.Decoder) error {
 	if d.Nil() {
 		return nil
 	}
@@ -259,24 +260,24 @@ func NewServer(testService TestService, tlsConfig *tls.Config, logger *zerolog.L
 
 	table[10] = func(ctx context.Context, incoming *packet.Packet) (outgoing *packet.Packet, action frisbee.Action) {
 		req := NewRequest()
-		err := req.Decode(incoming.Content.B)
+		err := req.Decode(*incoming.Content)
 		if err == nil {
 			var res *Response
 			outgoing = incoming
 			outgoing.Content.Reset()
 			res, err = testService.GetNumber(ctx, req)
 			if err != nil {
-				res.Error(outgoing, err)
+				res.Error(outgoing.Content, err)
 			} else {
-				res.Encode(outgoing)
+				res.Encode(outgoing.Content)
 			}
-			outgoing.Metadata.ContentLength = uint32(len(outgoing.Content.B))
+			outgoing.Metadata.ContentLength = uint32(len(*outgoing.Content))
 		}
 		return
 	}
 	table[11] = func(ctx context.Context, incoming *packet.Packet) (outgoing *packet.Packet, action frisbee.Action) {
 		req := NewCount()
-		err := req.Decode(incoming.Content.B)
+		err := req.Decode(*incoming.Content)
 		if err == nil {
 			id := incoming.Metadata.Id
 			conn := ctx.Value(connectionContextKey).(*frisbee.Async)
@@ -361,8 +362,8 @@ func NewServer(testService TestService, tlsConfig *tls.Config, logger *zerolog.L
 
 				p.Metadata.Id = id
 
-				m.Encode(p)
-				p.Metadata.ContentLength = uint32(len(p.Content.B))
+				m.Encode(p.Content)
+				p.Metadata.ContentLength = uint32(len(*p.Content))
 				err := conn.WritePacket(p)
 				if err != nil {
 					packet.Put(p)
@@ -396,7 +397,7 @@ func NewServer(testService TestService, tlsConfig *tls.Config, logger *zerolog.L
 	}
 	table[12] = func(ctx context.Context, incoming *packet.Packet) (outgoing *packet.Packet, action frisbee.Action) {
 		req := NewRequest()
-		err := req.Decode(incoming.Content.B)
+		err := req.Decode(*incoming.Content)
 		if err == nil {
 			id := incoming.Metadata.Id
 			conn := ctx.Value(connectionContextKey).(*frisbee.Async)
@@ -425,8 +426,8 @@ func NewServer(testService TestService, tlsConfig *tls.Config, logger *zerolog.L
 
 				p.Metadata.Id = id
 
-				m.Encode(p)
-				p.Metadata.ContentLength = uint32(len(p.Content.B))
+				m.Encode(p.Content)
+				p.Metadata.ContentLength = uint32(len(*p.Content))
 				err := conn.WritePacket(p)
 				if err != nil {
 					packet.Put(p)
@@ -451,7 +452,7 @@ func NewServer(testService TestService, tlsConfig *tls.Config, logger *zerolog.L
 	}
 	table[13] = func(ctx context.Context, incoming *packet.Packet) (outgoing *packet.Packet, action frisbee.Action) {
 		req := NewCount()
-		err := req.Decode(incoming.Content.B)
+		err := req.Decode(*incoming.Content)
 		if err == nil {
 			id := incoming.Metadata.Id
 			conn := ctx.Value(connectionContextKey).(*frisbee.Async)
@@ -536,8 +537,8 @@ func NewServer(testService TestService, tlsConfig *tls.Config, logger *zerolog.L
 
 				p.Metadata.Id = id
 
-				m.Encode(p)
-				p.Metadata.ContentLength = uint32(len(p.Content.B))
+				m.Encode(p.Content)
+				p.Metadata.ContentLength = uint32(len(*p.Content))
 				err := conn.WritePacket(p)
 				if err != nil {
 					packet.Put(p)
@@ -745,7 +746,7 @@ func NewClient(tlsConfig *tls.Config, logger *zerolog.Logger) (*Client, error) {
 		if ch, ok := c.inflightGetNumber[incoming.Metadata.Id]; ok {
 			c.inflightGetNumberMu.RUnlock()
 			res := NewResponse()
-			res.Decode(incoming.Content.B)
+			res.Decode(*incoming.Content)
 			ch <- res
 		} else {
 			c.inflightGetNumberMu.RUnlock()
@@ -757,7 +758,7 @@ func NewClient(tlsConfig *tls.Config, logger *zerolog.Logger) (*Client, error) {
 		if ch, ok := c.inflightSendNumbers[incoming.Metadata.Id]; ok {
 			c.inflightSendNumbersMu.RUnlock()
 			res := NewResponse()
-			res.Decode(incoming.Content.B)
+			res.Decode(*incoming.Content)
 			ch <- res
 		} else {
 			c.inflightSendNumbersMu.RUnlock()
@@ -766,7 +767,7 @@ func NewClient(tlsConfig *tls.Config, logger *zerolog.Logger) (*Client, error) {
 	}
 	table[12] = func(ctx context.Context, incoming *packet.Packet) (outgoing *packet.Packet, action frisbee.Action) {
 		res := NewCount()
-		err := res.Decode(incoming.Content.B)
+		err := res.Decode(*incoming.Content)
 		if err == nil {
 			c.streamsGetNumbersMu.RLock()
 			if stream, ok := c.streamsGetNumbers[incoming.Metadata.Id]; ok {
@@ -786,7 +787,7 @@ func NewClient(tlsConfig *tls.Config, logger *zerolog.Logger) (*Client, error) {
 	}
 	table[13] = func(ctx context.Context, incoming *packet.Packet) (outgoing *packet.Packet, action frisbee.Action) {
 		res := NewCount()
-		err := res.Decode(incoming.Content.B)
+		err := res.Decode(*incoming.Content)
 		if err == nil {
 			c.streamsExchangeNumbersMu.RLock()
 			if stream, ok := c.streamsExchangeNumbers[incoming.Metadata.Id]; ok {
@@ -839,8 +840,8 @@ func (c *Client) GetNumber(ctx context.Context, req *Request) (res *Response, er
 	c.nextGetNumberMu.Unlock()
 	p.Metadata.Id = id
 
-	req.Encode(p)
-	p.Metadata.ContentLength = uint32(len(p.Content.B))
+	req.Encode(p.Content)
+	p.Metadata.ContentLength = uint32(len(*p.Content))
 	c.inflightGetNumberMu.Lock()
 	c.inflightGetNumber[id] = ch
 	c.inflightGetNumberMu.Unlock()
@@ -872,8 +873,8 @@ func (c *Client) SendNumbers(ctx context.Context, req *Count) (*SendNumbersClien
 	c.nextSendNumbersMu.Unlock()
 	p.Metadata.Id = id
 
-	req.Encode(p)
-	p.Metadata.ContentLength = uint32(len(p.Content.B))
+	req.Encode(p.Content)
+	p.Metadata.ContentLength = uint32(len(*p.Content))
 	err := c.Client.WritePacket(p)
 
 	if err != nil {
@@ -910,8 +911,8 @@ func (c *Client) SendNumbers(ctx context.Context, req *Count) (*SendNumbersClien
 
 		p.Metadata.Id = id
 
-		m.Encode(p)
-		p.Metadata.ContentLength = uint32(len(p.Content.B))
+		m.Encode(p.Content)
+		p.Metadata.ContentLength = uint32(len(*p.Content))
 		err := c.WritePacket(p)
 		if err != nil {
 			packet.Put(p)
@@ -964,8 +965,8 @@ func (c *Client) GetNumbers(ctx context.Context, req *Request) (*GetNumbersClien
 	c.nextGetNumbersMu.Unlock()
 	p.Metadata.Id = id
 
-	req.Encode(p)
-	p.Metadata.ContentLength = uint32(len(p.Content.B))
+	req.Encode(p.Content)
+	p.Metadata.ContentLength = uint32(len(*p.Content))
 	err := c.Client.WritePacket(p)
 
 	q := queue.NewCircular[Count, *Count](100)
@@ -1066,8 +1067,8 @@ func (c *Client) ExchangeNumbers(ctx context.Context, req *Count) (*ExchangeNumb
 	c.nextExchangeNumbersMu.Unlock()
 	p.Metadata.Id = id
 
-	req.Encode(p)
-	p.Metadata.ContentLength = uint32(len(p.Content.B))
+	req.Encode(p.Content)
+	p.Metadata.ContentLength = uint32(len(*p.Content))
 	err := c.Client.WritePacket(p)
 
 	q := queue.NewCircular[Count, *Count](100)
@@ -1141,8 +1142,8 @@ func (c *Client) ExchangeNumbers(ctx context.Context, req *Count) (*ExchangeNumb
 
 		p.Metadata.Id = id
 
-		m.Encode(p)
-		p.Metadata.ContentLength = uint32(len(p.Content.B))
+		m.Encode(p.Content)
+		p.Metadata.ContentLength = uint32(len(*p.Content))
 		err := c.WritePacket(p)
 		if err != nil {
 			packet.Put(p)
